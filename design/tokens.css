@@ -1,0 +1,89 @@
+/*
+ * Hidden Cost Audit: theme tokens. Source of truth for the look; see DESIGN.md.
+ * Moves to app/globals.css when the Next.js app is scaffolded (build step 5).
+ * Components use role tokens only: no raw hex or px.
+ */
+
+/* IBM Plex Sans: self-hosted, two weights, tabular figures available via font-feature-settings. */
+@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+
+:root {
+  /* Colour by role. Contrast measured in DESIGN.md. */
+  --color-paper: #F6F6F2;       /* page background: the desk */
+  --color-sheet: #FFFFFF;       /* the statement itself */
+  --color-ink: #16181B;         /* body text and figures */
+  --color-ink-quiet: #545A61;   /* graphite: secondary text, rule IDs, tick marks */
+  --color-hairline: #DCDDD6;    /* ruled lines on the statement (decorative, not a boundary) */
+  --color-control: #8A8F95;     /* input and button borders (meets 3:1) */
+  --color-cost: #B42318;        /* red pen: costs and the auditor's marks. Never decoration. */
+  --color-cost-tint: #FDECEA;   /* background of a selected / highlighted cost line */
+  --color-action: #1B4F8F;      /* blue pencil: links, focus rings, primary buttons */
+  --color-action-ink: #FFFFFF;  /* text on --color-action */
+  --color-caution: #7A4A00;     /* stale, partial, quarantined: text */
+  --color-caution-bg: #FCF0D6;  /* stale, partial, quarantined: banner background */
+
+  /* Type: one family. Scale ratio 1.2 from 16px, rounded. */
+  --font-sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --text-xs: 0.8125rem;   /* 13: footnotes, margin notes on mobile */
+  --text-sm: 0.875rem;    /* 14: table cells, labels */
+  --text-md: 1rem;        /* 16: body */
+  --text-lg: 1.1875rem;   /* 19: section titles */
+  --text-xl: 1.4375rem;   /* 23: page title */
+  --text-total: 2.5rem;   /* 40: the headline total, the one bold thing */
+  --weight-regular: 400;
+  --weight-strong: 600;
+  --leading-body: 1.5;
+  --leading-tight: 1.2;
+  --measure: 68ch;
+  --figures: "tnum" 1, "lnum" 1;  /* tabular lining figures wherever numbers align */
+
+  /* Space: 4px base. */
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem;
+  --space-6: 1.5rem;  --space-8: 2rem;   --space-12: 3rem;  --space-16: 4rem;
+
+  /* Shape: paper has square corners; only controls are rounded. */
+  --radius-sheet: 0;
+  --radius-control: 4px;
+  --radius-mark: 2px;
+  --rule-thin: 1px;
+  --rule-total: 3px;            /* double underline = 1px line, 1px gap, 1px line */
+  --shadow-dialog: 0 8px 24px rgb(0 0 0 / 0.16);  /* the only shadow: dialogs float above the desk */
+
+  /* Layout. */
+  --width-page: 72rem;          /* 1152px */
+  --width-margin-notes: 18rem;  /* right-hand margin column on desktop */
+  --z-banner: 10; --z-dialog: 50; --z-toast: 60;
+
+  /* Motion: one orchestrated moment (the total's underline). Everything else responds to input. */
+  --dur-fast: 120ms;
+  --dur-mark: 320ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-paper: #111315; --color-sheet: #191C1F; --color-ink: #ECEDEA; --color-ink-quiet: #A3A8AE;
+    --color-hairline: #2C3035; --color-control: #6E747B; --color-cost: #FF8B7E; --color-cost-tint: #2E1A18;
+    --color-action: #93B8F2; --color-action-ink: #111315; --color-caution: #F0C46A; --color-caution-bg: #2B2412;
+    --shadow-dialog: 0 8px 24px rgb(0 0 0 / 0.5);
+  }
+}
+:root[data-theme="dark"] {
+  --color-paper: #111315; --color-sheet: #191C1F; --color-ink: #ECEDEA; --color-ink-quiet: #A3A8AE;
+  --color-hairline: #2C3035; --color-control: #6E747B; --color-cost: #FF8B7E; --color-cost-tint: #2E1A18;
+  --color-action: #93B8F2; --color-action-ink: #111315; --color-caution: #F0C46A; --color-caution-bg: #2B2412;
+  --shadow-dialog: 0 8px 24px rgb(0 0 0 / 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur-mark: 0ms; }
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-body);
+}

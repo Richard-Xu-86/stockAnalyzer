@@ -1,0 +1,19 @@
+# Dependencies and builds
+node_modules/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+
+# Secrets and tokens never leave this machine
+.env
+.env.*
+!.env.example
+.tokens.json
+
+# Real account data from the spike (scrubbed, but still personal)
+spike/raw/
+
+# Leftover update packages
+_to_delete/
+.DS_Store

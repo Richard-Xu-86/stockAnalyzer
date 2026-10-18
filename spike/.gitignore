@@ -1,0 +1,7 @@
+node_modules/
+# Secrets and tokens never leave this machine.
+.env
+.tokens.json
+# Raw responses may contain account data; only scrubbed copies are kept, and even those stay local.
+raw/
+# FINDINGS.md is generated from raw/ and is safe to commit after a read-through.
