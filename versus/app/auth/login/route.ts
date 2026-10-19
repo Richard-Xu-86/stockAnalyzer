@@ -12,6 +12,14 @@ export async function GET(req: Request) {
   const home = new URL(cfg.redirectUri);
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
   if (host && host !== home.host) {
+    // In production a mismatch is a configuration mistake (e.g. the local 127.0.0.1 redirect URI
+    // copied into Vercel). Say so plainly instead of silently sending the user to another machine.
+    if (process.env.NODE_ENV === "production") {
+      return new Response(
+        `Sign-in is misconfigured: SNAPTRADE_REDIRECT_URI points at ${home.host}, but this site is ${host}. Set it to https://${host}/auth/callback, add that URL to the SnapTrade OAuth app, and redeploy.`,
+        { status: 500, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } },
+      );
+    }
     return new Response(null, { status: 302, headers: { Location: `${home.origin}/auth/login`, "Cache-Control": "no-store" } });
   }
   const d = await discover(cfg);
