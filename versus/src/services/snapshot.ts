@@ -103,7 +103,12 @@ export async function snapshotUser(deps: SnapshotDeps, userId: string): Promise<
     const status = asOf !== null && asOf.getTime() >= closeInstant(date).getTime() ? "ok" : "stale";
 
     await repo.writeSnapshot(db, { userId, date, capturedAt: now, asOf, status, transactionsSyncedMin, accountIds: included.map((a) => a.id), positions, cash, raw });
-    if (status === "ok") await repo.setTrackingState(db, userId, lastOk ? "tracking" : "day_zero");
+    if (status === "ok") {
+      await repo.setTrackingState(db, userId, lastOk ? "tracking" : "day_zero");
+      // A close recorded outside the daily job (e.g. a sign-in after 4 PM) still needs that day's
+      // benchmark prices, or the first comparison has no market side. Only fills what is missing.
+      await captureBenchmarks(deps, date, [userId]);
+    }
     return "ok";
   } catch (err) {
     if (err instanceof AuthError) {

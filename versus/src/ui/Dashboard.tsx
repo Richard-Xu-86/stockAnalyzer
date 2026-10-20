@@ -152,6 +152,25 @@ function Today({ model }: { model: DashboardModel }) {
           <strong>Not counted.</strong> {d.reason}
         </p>
       )}
+      {d && d.r && !d.b && d.status !== "excluded" && (
+        <>
+          <table className="statement">
+            <tbody>
+              <tr>
+                <th scope="row">You</th>
+                <td className={`num ${isLoss(d.r) ? "loss" : ""}`}>{pct(d.r)}</td>
+              </tr>
+              <tr>
+                <th scope="row">{model.benchmarkLabel}</th>
+                <td className="num quiet">–</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="quiet small" style={{ marginTop: "var(--space-3)" }}>
+            The {model.benchmarkLabel}&apos;s closing price for {shortDay(d.prevDate)} wasn&apos;t recorded, so this day can&apos;t be compared with the market. Your return still counts toward your own history; comparisons pick up from the next close.
+          </p>
+        </>
+      )}
       {d && d.r && d.b && (
         <>
           <table className="statement">
@@ -359,6 +378,7 @@ function note(d: DayResult): string {
   if (d.spans > 1) parts.push(`Covers ${d.spans} trading days (missed run)`);
   if (d.status === "provisional") parts.push("Provisional");
   if (d.benchmarkMarketClosed) parts.push("Market holiday");
+  if (d.r && !d.b) parts.push("No market price recorded for the previous close");
   return parts.join(". ");
 }
 

@@ -38,6 +38,9 @@ export function computeMetrics(days: DayResult[]): Metrics {
   const trend: TrendPoint[] = [];
   let you = ONE;
   let market = ONE;
+  // The line starts at 0% on the close tracking is measured from, so one comparable day already
+  // draws a segment instead of a lone point.
+  if (pairs.length > 0) trend.push({ date: pairs[0]!.prevDate, you: ZERO, market: ZERO });
   for (const d of pairs) {
     you = you.times(ONE.plus(d.r));
     market = market.times(ONE.plus(d.b));

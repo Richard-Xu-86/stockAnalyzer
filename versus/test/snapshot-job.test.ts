@@ -49,6 +49,14 @@ describe("snapshot job", () => {
     expect((await repo.getUser(db, userId))!.trackingState).toBe("day_zero");
   });
 
+  it("records that day's benchmark prices when a close is captured outside the daily job (sign-in after 4 PM)", async () => {
+    s.asOf = "2026-10-18T22:00:01Z";
+    expect(await snapshotUser(deps(new Date("2026-10-18T22:00:00Z")), userId)).toBe("ok"); // Sunday: Friday's close
+    expect((await repo.loadSnapshots(db, userId))[0]!.date).toBe("2026-10-16");
+    expect(Number((await repo.loadBenchmark(db, "SPY")).get("2026-10-16"))).toBe(640.12);
+    expect(Number((await repo.loadBenchmark(db, "XIC.TO")).get("2026-10-16"))).toBe(41.5);
+  });
+
   it("only syncs history outside the close window, never storing intraday prices as a close", async () => {
     expect(await snapshotUser(deps(NOON), userId)).toBe("history_only");
     expect(await repo.loadSnapshots(db, userId)).toHaveLength(0);

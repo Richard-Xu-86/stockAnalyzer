@@ -67,7 +67,7 @@ describe("properties", () => {
         const ds = moves.map(([r, b], i) => day(i % 28, new D(r).div(10_000).toString(), new D(b).div(10_000).toString()));
         const m = computeMetrics(ds);
         const prod = ds.reduce((p, d) => p.times(ONE.plus(d.r!)), ONE).minus(ONE);
-        return near(m.cumulativeYou) === near(prod) && m.trend.length === ds.length;
+        return near(m.cumulativeYou) === near(prod) && m.trend.length === ds.length + 1 && m.trend[0]!.you.isZero();
       }),
     );
   });
