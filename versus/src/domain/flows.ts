@@ -28,9 +28,17 @@ export interface Flow {
   kind: "external" | "unmatched_transfer";
 }
 
+/**
+ * A matched transfer between two of the user's accounts (same day or up to 7 days apart).
+ * Between outDate and inDate the money is "in transit". Which accounts each leg belongs to matters:
+ * on a day when only one of the two accounts is being compared, that leg is money entering or
+ * leaving the compared set, i.e. a flow (see returns.ts).
+ */
 export interface Transit {
   outDate: string;
   inDate: string;
+  outAccountId: string;
+  inAccountId: string;
   amount: Dec; // positive
   currency: string;
 }
@@ -76,7 +84,7 @@ export function analyzeFlows(activities: ActivityRow[], connectedAccounts: Reado
     );
     if (match) {
       usedIn.add(match.id);
-      if (match.date > o.date) transits.push({ outDate: o.date, inDate: match.date, amount: oAmt, currency: o.currency! });
+      transits.push({ outDate: o.date, inDate: match.date, outAccountId: o.accountId, inAccountId: match.accountId, amount: oAmt, currency: o.currency! });
     } else {
       flows.push({ accountId: o.accountId, date: o.date, amount: oAmt.neg(), currency: o.currency!, activityId: o.id, kind: "unmatched_transfer" });
     }

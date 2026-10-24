@@ -84,7 +84,12 @@ export class SnapTradeClient {
       if (res.status === 401) {
         // A 401 can be account-specific; refresh at most once per client so one bad
         // account can never burn through rotating refresh tokens (spike lesson).
-        if (this.refreshed) throw new AuthError(`Unauthorized after refresh on ${redactPath(path)}`);
+        if (this.refreshed) {
+          // The token was just renewed successfully, so a 401 on an account-scoped call is about
+          // that account (e.g. its connection is broken), not the user's sign-in.
+          if (accountId) throw new ApiError(`SnapTrade 401 on ${redactPath(path)} after refresh`, 401);
+          throw new AuthError(`Unauthorized after refresh on ${redactPath(path)}`);
+        }
         this.refreshed = true;
         token = await this.tokens.refresh();
         attempt--;

@@ -82,6 +82,10 @@ describe("market calendar", () => {
     expect(closeDateFor(new Date("2026-08-29T15:00:00Z"))).toBe("2026-08-28"); // Saturday → Friday's close
     expect(isCloseWindow(new Date("2026-08-29T15:00:00Z"))).toBe(true);
     expect(isCloseWindow(new Date("2026-08-31T14:00:00Z"))).toBe(false); // Monday 10 AM: open again
+    expect(isCloseWindow(new Date("2026-08-31T12:00:00Z"))).toBe(false); // Monday 8 AM: pre-market, not a close
+    expect(isCloseWindow(new Date("2026-08-31T07:59:00Z"))).toBe(true); // Monday 3:59 AM: still Friday's close
+    expect(isCloseWindow(new Date("2026-12-14T08:30:00Z"))).toBe(true); // Mon 3:30 AM EST (winter offset)
+    expect(isCloseWindow(new Date("2026-12-14T09:30:00Z"))).toBe(false); // Mon 4:30 AM EST
   });
 
   it("counts trading days across a holiday", () => {

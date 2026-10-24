@@ -6,7 +6,7 @@ import * as repo from "@/lib/db/repo";
 import { log } from "@/lib/log";
 import { discover, refreshTokens, type OAuthConfig } from "@/lib/oauth/oauth";
 import { grantTokenProvider } from "@/lib/oauth/grants";
-import { AuthError, SnapTradeClient, type Pacer } from "@/lib/snaptrade/client";
+import { ApiError, AuthError, SchemaDriftError, SnapTradeClient, type Pacer } from "@/lib/snaptrade/client";
 import { BENCHMARKS } from "@/domain/types";
 import { toActivityRow, toCashRows, toPositionRow } from "./normalize";
 
@@ -31,6 +31,10 @@ const ACTIVITY_OVERLAP_DAYS = 3;
 export const ACTIVE_DAYS = 90; // tracking pauses after 90 days without a visit
 export const RETENTION_DAYS = 365; // data deleted after 12 months without a visit
 const RUN_BUDGET_MS = 240_000; // stay inside the function time limit; the retry run finishes the rest
+
+/** Errors that belong to one account (it is skipped), as opposed to the user's sign-in or an outage. */
+// 429 is excluded: still rate-limited after retries means "try this user again later" (the retry run).
+const isAccountError = (err: unknown): boolean => (err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 429) || err instanceof SchemaDriftError;
 
 export type UserOutcome = "ok" | "history_only" | "skipped" | "needs_signin" | "failed";
 
@@ -75,34 +79,62 @@ export async function snapshotUser(deps: SnapshotDeps, userId: string): Promise<
     const lastOk = await repo.lastOkSnapshotDate(db, userId);
     const fromDate = user.historySyncedAt ? addDays(lastOk ?? user.historySyncedAt.toISOString().slice(0, 10), -ACTIVITY_OVERLAP_DAYS) : null;
     for (const a of included) {
-      const acts = await api.activities(a.id, fromDate ?? undefined);
-      const rows = acts.map((x) => toActivityRow(a.id, x)).filter((x): x is NonNullable<typeof x> => x !== null);
-      await repo.replaceActivities(db, userId, a.id, fromDate, rows, new Map(acts.map((x) => [x.id, x])));
+      try {
+        const acts = await api.activities(a.id, fromDate ?? undefined);
+        const rows = acts.map((x) => toActivityRow(a.id, x)).filter((x): x is NonNullable<typeof x> => x !== null);
+        await repo.replaceActivities(db, userId, a.id, fromDate, rows, new Map(acts.map((x) => [x.id, x])));
+      } catch (err) {
+        if (!isAccountError(err)) throw err;
+        log.warn("account activities skipped", { userId, error: err as Error });
+      }
     }
     await repo.markHistorySynced(db, userId, now);
 
     if (!isCloseWindow(now)) return "history_only";
 
     const date = closeDateFor(now);
+    // First good close wins: a later run (a retry, or a sign-in the next morning) must never
+    // replace a snapshot taken right after the close with data taken further from it.
+    if (await repo.hasSnapshotFor(db, userId, date)) {
+      await captureBenchmarks(deps, date, [userId]);
+      return "ok";
+    }
     const positions = [];
     const cash = [];
     const raw: Record<string, unknown> = {};
+    const captured: typeof included = [];
+    const skipped: unknown[] = [];
     let asOf: Date | null = null;
     for (const a of included) {
-      const p = await api.positions(a.id);
-      const b = await api.balances(a.id);
-      raw[a.id] = { positions: p, balances: b };
-      positions.push(...p.results.map((x) => toPositionRow(a.id, x)));
-      cash.push(...toCashRows(a.id, b));
-      const t = p.data_freshness?.as_of ? new Date(p.data_freshness.as_of) : null;
-      if (t && (asOf === null || t < asOf)) asOf = t;
+      // One broken account (connection removed, account-specific error) is left out of today's
+      // snapshot instead of failing the whole user; returns compare only accounts in both closes.
+      try {
+        const p = await api.positions(a.id);
+        const b = await api.balances(a.id);
+        raw[a.id] = { positions: p, balances: b };
+        positions.push(...p.results.map((x) => toPositionRow(a.id, x)));
+        cash.push(...toCashRows(a.id, b));
+        captured.push(a);
+        const t = p.data_freshness?.as_of ? new Date(p.data_freshness.as_of) : null;
+        if (t && (asOf === null || t < asOf)) asOf = t;
+      } catch (err) {
+        if (!isAccountError(err)) throw err;
+        skipped.push(err);
+        log.warn("account left out of snapshot", { userId, error: err as Error });
+      }
     }
-    const syncDates = included.map((a) => a.transactionsSyncedThrough);
+    if (included.length > 0 && captured.length === 0) {
+      // Every account refused us even with a fresh token: the brokerage connection itself is broken,
+      // so the user has to reconnect (sign in again) rather than fail quietly every day.
+      if (skipped.every((e) => e instanceof ApiError && e.status === 401)) throw new AuthError("Every account returned 401 after a successful refresh");
+      throw new Error("No account could be read");
+    }
+    const syncDates = captured.map((a) => a.transactionsSyncedThrough);
     const transactionsSyncedMin = syncDates.length && syncDates.every((d) => d !== null) ? (syncDates as string[]).sort()[0]! : null;
     // Fresh means fetched after that trading day's close (the spike saw as_of = request time).
     const status = asOf !== null && asOf.getTime() >= closeInstant(date).getTime() ? "ok" : "stale";
 
-    await repo.writeSnapshot(db, { userId, date, capturedAt: now, asOf, status, transactionsSyncedMin, accountIds: included.map((a) => a.id), positions, cash, raw });
+    await repo.writeSnapshot(db, { userId, date, capturedAt: now, asOf, status, transactionsSyncedMin, accountIds: captured.map((a) => a.id), positions, cash, raw });
     if (status === "ok") {
       await repo.setTrackingState(db, userId, lastOk ? "tracking" : "day_zero");
       // A close recorded outside the daily job (e.g. a sign-in after 4 PM) still needs that day's
@@ -185,6 +217,10 @@ export async function runDaily(deps: SnapshotDeps, mode: "snapshot" | "retry"): 
 
   await ensureFx(deps, addDays(date, -10), date);
   const users = await repo.usersForRun(deps.db, ACTIVE_DAYS, now);
+  // Market prices first: one missing benchmark close removes two days from every user's totals,
+  // so it must not depend on the user loop finishing inside the time limit. Tried again after the
+  // loop for a brand-new deployment, whose first users have no stored accounts until they sync.
+  await captureBenchmarks(deps, date, users.map((u) => u.id));
 
   let ok = 0;
   let failed = 0;

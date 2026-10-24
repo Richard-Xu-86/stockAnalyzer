@@ -178,3 +178,98 @@ describe("transfers, account changes and coverage", () => {
     expect(computeDays(s, flowsOf(acts), NO_FX, "CAD", xic({}))[0]!.reason).toMatch(/no cash value/);
   });
 });
+
+/*
+ * Regressions from the independent review (Oct 24). Each scenario produced a wrong number with
+ * status "ok" before the fix; every expected value is worked out by hand in the comment.
+ */
+describe("review regressions: trades, new accounts, transit, missing benchmark", () => {
+  const flat = xic({ "2026-08-24": "40", "2026-08-25": "40", "2026-08-26": "40" });
+
+  it("buying a new holding is not a loss (was −5.00%)", () => {
+    // V_A = 10×100 + 1000 = 2000; buy 1 Y @100 → V_B = 1000 + 100 + 900 = 2000 → r = 0
+    const s = [snap("2026-08-24", ["a1"], [pos("a1", "X", "10", "100")], [cash("a1", "1000")]), snap("2026-08-25", ["a1"], [pos("a1", "X", "10", "100"), pos("a1", "Y", "1", "100")], [cash("a1", "900")])];
+    const [d] = computeDays(s, flowsOf([]), NO_FX, "CAD", flat);
+    expect([d!.status, near(d!.r), near(d!.coverage)]).toEqual(["ok", "0", "1"]);
+  });
+
+  it("selling out of a holding is not a gain (was +5.26%)", () => {
+    const s = [snap("2026-08-24", ["a1"], [pos("a1", "X", "10", "100"), pos("a1", "Y", "1", "100")], [cash("a1", "900")]), snap("2026-08-25", ["a1"], [pos("a1", "X", "10", "100")], [cash("a1", "1000")])];
+    expect(near(computeDays(s, flowsOf([]), NO_FX, "CAD", flat)[0]!.r)).toBe("0");
+  });
+
+  it("a real price move on a trading day is measured correctly", () => {
+    // V_A = 1000 + 1000 = 2000; X → 110, buy 1 Y @100: V_B = 1100 + 100 + 900 = 2100 → r = 0.05
+    const s = [snap("2026-08-24", ["a1"], [pos("a1", "X", "10", "100")], [cash("a1", "1000")]), snap("2026-08-25", ["a1"], [pos("a1", "X", "10", "110"), pos("a1", "Y", "1", "100")], [cash("a1", "900")])];
+    const [d] = computeDays(s, flowsOf([]), NO_FX, "CAD", flat);
+    expect(near(d!.r)).toBe("0.05");
+    // "what moved you": X's price effect 10×10/2000 = 0.05; the purchase itself explains nothing
+    expect(near(d!.drivers!.holdings[0]!.priceEffect)).toBe("0.05");
+    expect(near(d!.drivers!.remainder)).toBe("0");
+  });
+
+  it("a holding held at both ends but unpriced at one is left out of both ends", () => {
+    // OPT unpriced at B: excluded from V_A and V_B; X flat → r = 0.
+    // Coverage uses OPT's value at the priced end (1 × 0.40 × 100 = 40): 1000/(1000+40)
+    const opt = (price: string | null) => pos("a1", "OPT", "1", price, "CAD", { kind: "option", multiplier: "100", costBasis: "50" });
+    const s = [snap("2026-08-24", ["a1"], [pos("a1", "X", "10", "100"), opt("0.40")], []), snap("2026-08-25", ["a1"], [pos("a1", "X", "10", "100"), opt(null)], [])];
+    const [d] = computeDays(s, flowsOf([]), NO_FX, "CAD", flat);
+    expect([d!.status, near(d!.r)]).toEqual(["ok", "0"]);
+    expect(near(d!.coverage, 6)).toBe(near(new D(1000).div(1040), 6));
+  });
+
+  it("excludes the day when a holding bought today has no price (was −5.00%, ok)", () => {
+    const y = pos("a1", "Y", "1", null, "CAD", { costBasis: "100" });
+    const s = [snap("2026-08-24", ["a1"], [pos("a1", "X", "10", "100")], [cash("a1", "1000")]), snap("2026-08-25", ["a1"], [pos("a1", "X", "10", "100"), y], [cash("a1", "900")])];
+    const [d] = computeDays(s, flowsOf([]), NO_FX, "CAD", flat);
+    expect(d!.status).toBe("excluded");
+    expect(d!.reason).toMatch(/Y was bought or sold/);
+  });
+
+  it("measures a dropped holding by its real size, not its (missing) cost basis (was coverage 1.0)", () => {
+    // Z = 10,000 at A, unpriced at B, no cost basis: coverage = 1100 / (1100 + 10000) ≈ 0.099 → excluded
+    const z = (price: string | null) => pos("a1", "Z", "100", price, "CAD", { costBasis: null });
+    const s = [snap("2026-08-24", ["a1"], [z("100"), pos("a1", "X", "10", "100")], [cash("a1", "100")]), snap("2026-08-25", ["a1"], [z(null), pos("a1", "X", "10", "100")], [cash("a1", "100")])];
+    const [d] = computeDays(s, flowsOf([]), NO_FX, "CAD", flat);
+    expect(d!.status).toBe("excluded");
+    expect(near(d!.coverage, 4)).toBe(near(new D(1100).div(11100), 4));
+  });
+
+  it("moving money into a newly linked account is not a loss (was −50%)", () => {
+    // Only a1 is in both snapshots. a1 → a2 is matched internally, but a2 isn't compared that
+    // day, so the leg is money leaving the compared set: F = −5000; r = (5000 + 5000)/10000 − 1 = 0
+    const s = [snap("2026-08-24", ["a1"], [], [cash("a1", "10000")]), snap("2026-08-25", ["a1", "a2"], [], [cash("a1", "5000"), cash("a2", "5000")])];
+    const acts = [act("o", "a1", "INTERNAL_CASH_TRANSFER_OUT", "2026-08-25", "-5000"), act("i", "a2", "INTERNAL_CASH_TRANSFER_IN", "2026-08-25", "5000")];
+    const [d] = computeDays(s, flowsOf(acts), NO_FX, "CAD", flat);
+    expect([d!.status, near(d!.r)]).toEqual(["ok", "0"]);
+  });
+
+  it("money in transit from a newly linked account is not a gain (was +50%)", () => {
+    // a2 appears on the 25th and sends 500 to a1, arriving the 26th.
+    //  24→25: only a1 compared; the transfer hasn't reached a1 → r = 0 (no phantom transit)
+    //  25→26: both compared; 500 in transit at the 25th close → V_A = 1000+500+500 = 2000, V_B = 1500+500 = 2000 → r = 0
+    const s = [
+      snap("2026-08-24", ["a1"], [], [cash("a1", "1000")]),
+      snap("2026-08-25", ["a1", "a2"], [], [cash("a1", "1000"), cash("a2", "500")]),
+      snap("2026-08-26", ["a1", "a2"], [], [cash("a1", "1500"), cash("a2", "500")]),
+    ];
+    const acts = [act("o", "a2", "INTERNAL_CASH_TRANSFER_OUT", "2026-08-25", "-500"), act("i", "a1", "INTERNAL_CASH_TRANSFER_IN", "2026-08-26", "500")];
+    expect(computeDays(s, flowsOf(acts), NO_FX, "CAD", flat).map((d) => near(d.r))).toEqual(["0", "0"]);
+  });
+
+  it("a transfer arriving in a newly linked account from an existing one, days later, is money out then in", () => {
+    // a1 sends 400 on the 25th; a2 (not yet in the snapshots) receives it on the 26th.
+    //  24→25: only a1 compared → F = −400; V_A = 1000, V_B = 600 → r = (600 + 400)/1000 − 1 = 0
+    const s = [snap("2026-08-24", ["a1"], [], [cash("a1", "1000")]), snap("2026-08-25", ["a1"], [], [cash("a1", "600")])];
+    const acts = [act("o", "a1", "INTERNAL_CASH_TRANSFER_OUT", "2026-08-25", "-400"), act("i", "a2", "INTERNAL_CASH_TRANSFER_IN", "2026-08-26", "400")];
+    expect(near(computeDays(s, flowsOf(acts), NO_FX, "CAD", flat)[0]!.r)).toBe("0");
+  });
+
+  it("days without a market price are counted as left out, not silently dropped", () => {
+    // SPY missing on the 25th: both 24→25 and 25→26 lack a benchmark return.
+    const s = [snap("2026-08-24", ["u"], [], [cash("u", "1000", "USD")]), snap("2026-08-25", ["u"], [], [cash("u", "1045", "USD")]), snap("2026-08-26", ["u"], [], [cash("u", "1045", "USD")])];
+    const days = computeDays(s, flowsOf([], ["u"]), NO_FX, "USD", spy({ "2026-08-24": "600", "2026-08-26": "606" }));
+    const m = computeMetrics(days);
+    expect([m.comparableDays, m.excludedDays]).toEqual([0, 2]);
+  });
+});

@@ -53,6 +53,8 @@ function nyInstant(date: string, hh: number, mm: number): Date {
 /** Both markets close at 16:00 ET and open at 09:30 ET. */
 export const closeInstant = (date: string): Date => nyInstant(date, 16, 0);
 export const openInstant = (date: string): Date => nyInstant(date, 9, 30);
+/** US pre-market trading starts at 04:00 ET; after that, "last price" is no longer the close. */
+export const preMarketInstant = (date: string): Date => nyInstant(date, 4, 0);
 
 export function nextTradingDay(date: string): string {
   let d = addDays(date, 1);
@@ -62,11 +64,12 @@ export function nextTradingDay(date: string): string {
 
 /**
  * True when prices fetched at `at` are the close of `closeDateFor(at)`: after that close and
- * before the next session opens. A sign-in at noon on a trading day is not a close.
+ * before pre-market trading starts on the next trading day (04:00 ET). Weekends and holidays stay
+ * inside the window; a sign-in at noon, or at 8 AM before the open, is not a close.
  */
 export function isCloseWindow(at: Date): boolean {
   const d = closeDateFor(at);
-  return at.getTime() >= closeInstant(d).getTime() && at.getTime() < openInstant(nextTradingDay(d)).getTime();
+  return at.getTime() >= closeInstant(d).getTime() && at.getTime() < preMarketInstant(nextTradingDay(d)).getTime();
 }
 
 /**

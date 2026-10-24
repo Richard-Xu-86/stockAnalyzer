@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, or, sql, notInArray } from "drizzle-orm";
 import type { Db } from "./client";
 import { accounts, activities, benchmarkPrices, cashSnapshots, fxRates, portfolioSnapshots, positionSnapshots, snapshotRuns, users } from "./schema";
 import type { ActivityRow, CashRow, PositionRow, Snapshot } from "@/domain/types";
@@ -82,6 +82,13 @@ export async function upsertAccounts(db: Db, userId: string, rows: AccountInput[
         set: { connectionId: r.connectionId, institution: r.institution, name: r.name, rawType: r.rawType, accountCategory: r.accountCategory, transactionsSyncedThrough: r.transactionsSyncedThrough, included, updatedAt: new Date() },
       });
   }
+  // Accounts SnapTrade no longer returns (connection removed, account closed) stop counting.
+  // Otherwise every run would keep querying them, fail, and freeze the "provisional" label.
+  const returned = rows.map((r) => r.id);
+  await db
+    .update(accounts)
+    .set({ included: false, updatedAt: new Date() })
+    .where(returned.length ? and(eq(accounts.userId, userId), notInArray(accounts.id, returned)) : eq(accounts.userId, userId));
   return db.select().from(accounts).where(eq(accounts.userId, userId));
 }
 
@@ -159,8 +166,13 @@ export async function lastOkSnapshotDate(db: Db, userId: string): Promise<string
   return r?.d ?? null;
 }
 
+/** True when the user already has a good ("ok") close for `date`. */
 export async function hasSnapshotFor(db: Db, userId: string, date: string): Promise<boolean> {
-  const rows = await db.select({ d: portfolioSnapshots.tradingDate }).from(portfolioSnapshots).where(and(eq(portfolioSnapshots.userId, userId), eq(portfolioSnapshots.tradingDate, date)));
+  // Only a good close counts: a "stale" snapshot is exactly what the retry run exists to replace.
+  const rows = await db
+    .select({ d: portfolioSnapshots.tradingDate })
+    .from(portfolioSnapshots)
+    .where(and(eq(portfolioSnapshots.userId, userId), eq(portfolioSnapshots.tradingDate, date), eq(portfolioSnapshots.status, "ok")));
   return rows.length > 0;
 }
 

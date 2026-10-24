@@ -63,13 +63,65 @@ describe("snapshot job", () => {
     expect((await repo.getUser(db, userId))!.historySyncedAt).not.toBeNull();
   });
 
-  it("is idempotent: running twice for the same close leaves one snapshot", async () => {
+  it("is idempotent and keeps the first good close: a later run never replaces it", async () => {
     await snapshotUser(deps(CLOSE), userId);
     s.cash.tfsa = [{ code: "CAD", cash: 650 }];
     await snapshotUser(deps(new Date("2026-08-24T23:00:00Z")), userId);
     const snaps = await repo.loadSnapshots(db, userId);
     expect(snaps).toHaveLength(1);
-    expect(Number(snaps[0]!.cash[0]!.cash)).toBe(650); // the later fetch replaces, never duplicates
+    expect(Number(snaps[0]!.cash[0]!.cash)).toBe(500); // the 6 PM close stands
+  });
+
+  it("replaces a stale snapshot with a later good one", async () => {
+    s.asOf = "2026-08-24T15:00:00Z"; // broker data from before the close
+    await snapshotUser(deps(CLOSE), userId);
+    s.asOf = "2026-08-24T23:00:01Z";
+    s.cash.tfsa = [{ code: "CAD", cash: 650 }];
+    await snapshotUser(deps(new Date("2026-08-24T23:00:00Z")), userId);
+    const [snap] = await repo.loadSnapshots(db, userId);
+    expect([snap!.status, Number(snap!.cash[0]!.cash)]).toEqual(["ok", 650]);
+  });
+
+  it("does not treat a sign-in before the next open (pre-market) as a close", async () => {
+    await snapshotUser(deps(CLOSE), userId); // Monday's close, cash 500
+    s.cash.tfsa = [{ code: "CAD", cash: 999 }];
+    expect(await snapshotUser(deps(new Date("2026-08-25T12:00:00Z")), userId)).toBe("history_only"); // Tue 8 AM ET
+    const snaps = await repo.loadSnapshots(db, userId);
+    expect(snaps.map((x) => [x.date, Number(x.cash[0]!.cash)])).toEqual([["2026-08-24", 500]]);
+  });
+
+  it("stops querying accounts SnapTrade no longer returns", async () => {
+    s.accounts.push({ id: "rrsp", category: "INVESTMENT", raw_type: "RRSP", lastSync: "2026-08-20" });
+    s.positions.rrsp = [{ symbol: "VFV.TO", units: 10, price: 150, currency: "CAD" }];
+    await snapshotUser(deps(CLOSE), userId);
+    expect((await repo.listAccounts(db, userId)).find((a) => a.id === "rrsp")!.included).toBe(true);
+    s.accounts = s.accounts.filter((a) => a.id !== "rrsp"); // connection removed
+    s.calls = [];
+    expect(await snapshotUser(deps(new Date("2026-08-25T22:00:00Z")), userId)).toBe("ok");
+    expect(s.calls.some((c) => c.includes("/rrsp/"))).toBe(false);
+    expect((await repo.listAccounts(db, userId)).find((a) => a.id === "rrsp")!.included).toBe(false);
+  });
+
+  it("leaves one broken account out of the snapshot instead of failing the user", async () => {
+    s.accounts.push({ id: "rrsp", category: "INVESTMENT", raw_type: "RRSP", lastSync: "2026-08-24" });
+    s.failures.push({ match: "/rrsp/positions", statuses: [404] });
+    expect(await snapshotUser(deps(CLOSE), userId)).toBe("ok");
+    const [snap] = await repo.loadSnapshots(db, userId);
+    expect(snap!.accountIds).toEqual(["tfsa"]);
+  });
+
+  it("asks the user to reconnect when every account returns 401 even after a good refresh", async () => {
+    s.failures.push({ match: "/tfsa/", statuses: Array(10).fill(401) });
+    expect(await snapshotUser(deps(CLOSE), userId)).toBe("needs_signin");
+    expect((await repo.getUser(db, userId))!.trackingState).toBe("needs_signin");
+  });
+
+  it("treats a 401 on one account after a good token refresh as that account's problem, not a sign-out", async () => {
+    s.accounts.push({ id: "rrsp", category: "INVESTMENT", raw_type: "RRSP", lastSync: "2026-08-24" });
+    s.failures.push({ match: "/rrsp/", statuses: [401, 401, 401, 401, 401, 401] });
+    expect(await snapshotUser(deps(CLOSE), userId)).toBe("ok");
+    expect((await repo.getUser(db, userId))!.trackingState).not.toBe("needs_signin");
+    expect((await repo.loadSnapshots(db, userId))[0]!.accountIds).toEqual(["tfsa"]);
   });
 
   it("marks the snapshot stale when the broker's data predates the close", async () => {
@@ -142,6 +194,16 @@ describe("daily run", () => {
     expect(r.ok).toBe(0);
     expect(s.calls.some((c) => c.includes("positions"))).toBe(false);
     expect(s.calls.some((c) => c.includes("quotes"))).toBe(false);
+  });
+
+  it("the retry run retries users whose snapshot was stale", async () => {
+    s.asOf = "2026-08-24T15:00:00Z";
+    await runDaily(deps(CLOSE), "snapshot");
+    expect((await repo.loadSnapshots(db, userId))[0]!.status).toBe("stale");
+    s.asOf = "2026-08-24T23:00:01Z";
+    const r = await runDaily(deps(new Date("2026-08-24T23:00:00Z")), "retry");
+    expect(r.ok).toBe(1);
+    expect((await repo.loadSnapshots(db, userId))[0]!.status).toBe("ok");
   });
 
   it("pauses users who have not visited in 90 days, and retention deletes after 12 months", async () => {

@@ -56,7 +56,9 @@ export function computeMetrics(days: DayResult[]): Metrics {
   };
   return {
     comparableDays: pairs.length,
-    excludedDays: days.filter((d) => d.status === "excluded").length,
+    // Every day that is not in the totals, for any reason (bad data, or no market price for one
+    // of its two closes), so the page can say how many were left out instead of dropping silently.
+    excludedDays: days.length - pairs.length,
     cumulativeYou: pairs.length ? you.minus(ONE) : null,
     cumulativeMarket: pairs.length ? market.minus(ONE) : null,
     trend,
