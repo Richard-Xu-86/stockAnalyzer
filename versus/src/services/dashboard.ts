@@ -18,7 +18,7 @@ export interface DashboardInput {
   currency: Ccy;
   /**
    * How far the broker has reported transactions *now*, across the included accounts (earliest
-   * account wins). Snapshots save the value seen at 6 PM, when the broker is usually a day behind,
+   * account wins). Snapshots save the value seen just after the close, when the broker is usually a day behind,
    * so without this every day would stay "provisional" forever. Null when any account is unknown.
    */
   transactionsSyncedNow?: string | null;

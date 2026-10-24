@@ -41,6 +41,8 @@ export interface DayResult {
   valueEnd: Dec | null;
   benchmarkMarketClosed: boolean;
   drivers: { holdings: HoldingEffect[]; cashCurrencyEffect: Dec; remainder: Dec } | null;
+  /** Set when consecutive days were combined because the market price for these closes is missing. */
+  combinedOver?: string[];
 }
 
 const key = (p: PositionRow) => `${p.accountId}|${p.symbolKey}`;
@@ -230,6 +232,53 @@ export function computeDays(
       });
     }
   }
+  return combineAcrossMissingBenchmark(out, bench, fx, ccy);
+}
+
+/**
+ * A missing benchmark close (a failed capture) would leave both days that touch it without a market
+ * return. Instead of guessing the price, combine those days into one comparison over the same span:
+ * the user's returns compound, the market is measured from the last saved price before the gap to
+ * the first one after it. Like a missed run, nothing is invented and both sides cover the same days.
+ * A gap at the very start (no earlier price) or broken by an excluded day stays uncompared.
+ */
+function combineAcrossMissingBenchmark(days: DayResult[], bench: BenchmarkSeries, fx: ReadonlyMap<string, string>, ccy: Ccy): DayResult[] {
+  const priced = (date: string) => dec(bench.prices.get(date)) !== null && rateTo(fx, bench.currency, ccy, date) !== null;
+  const out: DayResult[] = [];
+  let run: DayResult[] = [];
+  const flush = () => {
+    out.push(...run);
+    run = [];
+  };
+  for (const d of days) {
+    const measurable = d.status !== "excluded" && d.r !== null;
+    if (!measurable || d.b !== null) {
+      flush();
+      out.push(d);
+      continue;
+    }
+    run.push(d);
+    if (!priced(d.date)) continue; // still inside the gap
+    // The gap closes at d. Combine only if the run starts from a priced close.
+    if (run.length >= 2 && priced(run[0]!.prevDate)) {
+      const first = run[0]!;
+      const r = run.reduce((acc, x) => acc.times(ONE.plus(x.r!)), ONE).minus(ONE);
+      out.push({
+        ...d,
+        prevDate: first.prevDate,
+        spans: run.reduce((n, x) => n + x.spans, 0),
+        status: run.some((x) => x.status === "provisional") ? "provisional" : "ok",
+        reason: run.some((x) => x.status === "provisional") ? "Deposits for this day may not have synced yet" : null,
+        r,
+        b: benchmarkReturn(bench, fx, ccy, first.prevDate, d.date),
+        coverage: D.min(...run.map((x) => x.coverage ?? ONE)),
+        drivers: null, // per-holding effects don't compound simply; the combined day shows totals only
+        combinedOver: run.slice(0, -1).map((x) => x.date),
+      });
+      run = [];
+    } else flush();
+  }
+  flush();
   return out;
 }
 

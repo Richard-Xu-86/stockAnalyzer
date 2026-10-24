@@ -1,4 +1,4 @@
-import { addDays, closeDateFor, closeInstant, isCloseWindow, isKnownYear } from "@/lib/calendar";
+import { addDays, closeDateFor, closeInstant, isCloseWindow, isKnownYear, newYorkDate } from "@/lib/calendar";
 import { fetchUsdCad } from "@/lib/boc";
 import type { Keyring } from "@/lib/crypto";
 import type { Db } from "@/lib/db/client";
@@ -33,6 +33,17 @@ export const RETENTION_DAYS = 365; // data deleted after 12 months without a vis
 const RUN_BUDGET_MS = 240_000; // stay inside the function time limit; the retry run finishes the rest
 
 /** Errors that belong to one account (it is skipped), as opposed to the user's sign-in or an outage. */
+/**
+ * The market day a broker's last sync covers, in New York time: a sync at 9 PM Eastern is
+ * 01:00 UTC the next day, and cutting the UTC timestamp would call the next day synced too early.
+ */
+export function syncedThroughDate(ts: string | null | undefined): string | null {
+  if (!ts) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ts)) return ts; // already a calendar date: no time zone to apply
+  const at = new Date(ts);
+  return Number.isNaN(at.getTime()) ? null : newYorkDate(at);
+}
+
 // 429 is excluded: still rate-limited after retries means "try this user again later" (the retry run).
 const isAccountError = (err: unknown): boolean => (err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 429) || err instanceof SchemaDriftError;
 
@@ -69,7 +80,7 @@ export async function snapshotUser(deps: SnapshotDeps, userId: string): Promise<
         name: a.name ?? null,
         rawType: a.raw_type ?? null,
         accountCategory: a.account_category ?? null,
-        transactionsSyncedThrough: a.sync_status?.transactions?.last_successful_sync?.slice(0, 10) ?? null,
+        transactionsSyncedThrough: syncedThroughDate(a.sync_status?.transactions?.last_successful_sync),
       })),
     );
     const included = stored.filter((a) => a.included && !a.userExcluded);

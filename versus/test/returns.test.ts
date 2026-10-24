@@ -265,11 +265,30 @@ describe("review regressions: trades, new accounts, transit, missing benchmark",
     expect(near(computeDays(s, flowsOf(acts), NO_FX, "CAD", flat)[0]!.r)).toBe("0");
   });
 
-  it("days without a market price are counted as left out, not silently dropped", () => {
-    // SPY missing on the 25th: both 24→25 and 25→26 lack a benchmark return.
+  it("combines the two days around a missing market price into one comparison (was: both dropped)", () => {
+    // SPY missing on the 25th. Combined 24→26: you (1045/1000)(1045/1045) − 1 = +4.5%;
+    // market 606/600 − 1 = +1%. Nothing guessed, same span on both sides.
     const s = [snap("2026-08-24", ["u"], [], [cash("u", "1000", "USD")]), snap("2026-08-25", ["u"], [], [cash("u", "1045", "USD")]), snap("2026-08-26", ["u"], [], [cash("u", "1045", "USD")])];
     const days = computeDays(s, flowsOf([], ["u"]), NO_FX, "USD", spy({ "2026-08-24": "600", "2026-08-26": "606" }));
+    expect(days).toHaveLength(1);
+    expect(days[0]).toMatchObject({ date: "2026-08-26", prevDate: "2026-08-24", spans: 2, combinedOver: ["2026-08-25"] });
+    expect([near(days[0]!.r), near(days[0]!.b)]).toEqual(["0.045", "0.01"]);
     const m = computeMetrics(days);
-    expect([m.comparableDays, m.excludedDays]).toEqual([0, 2]);
+    expect([m.comparableDays, m.excludedDays, near(m.cumulativeYou)]).toEqual([1, 0, "0.045"]);
+  });
+
+  it("leaves a gap at the very start uncompared (no earlier price to measure from), and counts it", () => {
+    // Like Oct 16→19: no SPY for the first close, so 24→25 has no anchor; 25→26 compares normally.
+    const s = [snap("2026-08-24", ["u"], [], [cash("u", "1000", "USD")]), snap("2026-08-25", ["u"], [], [cash("u", "990", "USD")]), snap("2026-08-26", ["u"], [], [cash("u", "999.9", "USD")])];
+    const days = computeDays(s, flowsOf([], ["u"]), NO_FX, "USD", spy({ "2026-08-25": "600", "2026-08-26": "606" }));
+    expect(days.map((d) => [d.date, d.b === null])).toEqual([["2026-08-25", true], ["2026-08-26", false]]);
+    expect(computeMetrics(days).excludedDays).toBe(1);
+  });
+
+  it("does not combine across a day excluded for bad data", () => {
+    // 25th has no SPY and the 24→25 day is excluded (portfolio too small): nothing to combine.
+    const s = [snap("2026-08-24", ["u"], [], [cash("u", "50", "USD")]), snap("2026-08-25", ["u"], [], [cash("u", "1000", "USD")]), snap("2026-08-26", ["u"], [], [cash("u", "1010", "USD")])];
+    const days = computeDays(s, flowsOf([], ["u"]), NO_FX, "USD", spy({ "2026-08-24": "600", "2026-08-26": "606" }));
+    expect(days.map((d) => [d.date, d.status, d.b === null])).toEqual([["2026-08-25", "excluded", true], ["2026-08-26", "ok", true]]);
   });
 });

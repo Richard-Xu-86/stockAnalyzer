@@ -92,3 +92,31 @@ describe("market calendar", () => {
     expect(tradingDaysBetween("2026-06-30", "2026-07-06")).toBe(4); // Jul 1 (TSX closed but NYSE open), 2, 3 (NYSE closed, TSX open), 6
   });
 });
+
+describe("time zones", () => {
+  it("reads a broker's last sync as a New York market day, not a UTC date", async () => {
+    const { syncedThroughDate } = await import("@/services/snapshot");
+    expect(syncedThroughDate("2026-10-23T01:30:00Z")).toBe("2026-10-22"); // 9:30 PM EDT on the 22nd
+    expect(syncedThroughDate("2026-10-23T14:00:00Z")).toBe("2026-10-23");
+    expect(syncedThroughDate("2026-12-15T04:30:00Z")).toBe("2026-12-14"); // 11:30 PM EST
+    expect(syncedThroughDate("2026-10-22")).toBe("2026-10-22"); // a plain date is taken as-is
+    expect(syncedThroughDate(null)).toBeNull();
+    expect(syncedThroughDate("not a date")).toBeNull();
+  });
+
+  it("runs the daily job after the close in both summer and winter, within Vercel's one-hour window", async () => {
+    const { readFileSync } = await import("node:fs");
+    const crons = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8")).crons as Array<{ path: string; schedule: string }>;
+    const snap = crons.find((c) => c.path === "/api/cron/snapshot")!.schedule.split(" ");
+    const [mm, hh] = [Number(snap[0]), Number(snap[1])];
+    for (const day of ["2026-07-14", "2026-12-15"]) {
+      // earliest and latest possible start on Hobby: scheduled time + up to 59 minutes
+      for (const extra of [0, 59]) {
+        const at = new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8)), hh, mm + extra));
+        expect(isCloseWindow(at)).toBe(true);
+        expect(closeDateFor(at)).toBe(day);
+        expect(at.getTime() - closeInstant(day).getTime()).toBeLessThanOrEqual(2.1 * 3600_000); // within ~2h of the close
+      }
+    }
+  });
+});

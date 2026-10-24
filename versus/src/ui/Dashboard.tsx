@@ -145,7 +145,11 @@ function Today({ model }: { model: DashboardModel }) {
     <section className="sheet" aria-labelledby="today-h">
       <h2 id="today-h">{d ? (d.spans > 1 ? `Since ${shortDay(d.prevDate)}` : day(d.date, true)) : "Today"}</h2>
       <p className="sub quiet small">
-        {d ? (d.spans > 1 ? `${d.spans} trading days to ${day(d.date)}: a run was missed, so these are combined.` : "Close to close, deposits and withdrawals removed.") : "Waiting for two closes to compare."}
+        {d
+          ? d.spans > 1
+            ? `${d.spans} trading days to ${day(d.date)}: ${d.combinedOver ? `no market price was recorded for ${d.combinedOver.map(shortDay).join(", ")}` : "a run was missed"}, so these are combined.`
+            : "Close to close, deposits and withdrawals removed."
+          : "Waiting for two closes to compare."}
       </p>
       {d && d.status === "excluded" && (
         <p>
@@ -375,7 +379,7 @@ function Recent({ days, benchmarkLabel }: { days: DayResult[]; benchmarkLabel: s
 function note(d: DayResult): string {
   if (d.status === "excluded") return `Not counted: ${d.reason ?? "incomplete data"}`;
   const parts: string[] = [];
-  if (d.spans > 1) parts.push(`Covers ${d.spans} trading days (missed run)`);
+  if (d.spans > 1) parts.push(`Covers ${d.spans} trading days (${d.combinedOver ? `no market price for ${d.combinedOver.map(shortDay).join(", ")}` : "missed run"})`);
   if (d.status === "provisional") parts.push("Provisional");
   if (d.benchmarkMarketClosed) parts.push("Market holiday");
   if (d.r && !d.b) parts.push("No market price recorded for the previous close");
