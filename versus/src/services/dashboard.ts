@@ -16,6 +16,12 @@ export interface DashboardInput {
   benchmarkPrices: Record<BenchmarkId, ReadonlyMap<string, string>>;
   benchmark: BenchmarkId;
   currency: Ccy;
+  /**
+   * How far the broker has reported transactions *now*, across the included accounts (earliest
+   * account wins). Snapshots save the value seen at 6 PM, when the broker is usually a day behind,
+   * so without this every day would stay "provisional" forever. Null when any account is unknown.
+   */
+  transactionsSyncedNow?: string | null;
 }
 
 export interface DriverLine {
@@ -42,23 +48,30 @@ const TOP_DRIVERS = 3;
 export function buildDashboard(input: DashboardInput): DashboardModel {
   const connected = new Set<string>([...input.activities.map((a) => a.accountId), ...input.snapshots.flatMap((s) => s.accountIds)]);
   const flows = analyzeFlows(input.activities, connected);
+  const now = input.transactionsSyncedNow ?? null;
+  const snapshots = now
+    ? input.snapshots.map((s) => (s.transactionsSyncedMin === null || s.transactionsSyncedMin < now ? { ...s, transactionsSyncedMin: now } : s))
+    : input.snapshots;
   const meta = BENCHMARKS[input.benchmark];
-  const days = computeDays(input.snapshots, flows, input.fx, input.currency, {
+  const days = computeDays(snapshots, flows, input.fx, input.currency, {
     id: input.benchmark,
     ticker: meta.ticker,
     currency: meta.currency,
     prices: input.benchmarkPrices[input.benchmark],
   });
-  const ok = input.snapshots.filter((s) => s.status === "ok").sort((a, b) => a.date.localeCompare(b.date));
+  const ok = snapshots.filter((s) => s.status === "ok").sort((a, b) => a.date.localeCompare(b.date));
   const latest = days.at(-1) ?? null;
+  const metrics = computeMetrics(days);
   return {
     benchmark: input.benchmark,
     benchmarkLabel: meta.label,
     currency: input.currency,
-    trackingSince: ok[0]?.date ?? null,
+    // The close comparisons are measured from (what the chart and totals use); before the first
+    // comparison exists, the first snapshot.
+    trackingSince: metrics.trend[0]?.date ?? ok[0]?.date ?? null,
     latest,
     drivers: latest?.drivers ? driverLines(latest.drivers.holdings, latest.drivers.cashCurrencyEffect, latest.drivers.remainder) : [],
-    metrics: computeMetrics(days),
+    metrics,
     recentDays: days.slice(-10).reverse(),
     dayOne: dayOneHistory(input.activities, flows),
     okSnapshots: ok.length,
