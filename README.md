@@ -156,7 +156,7 @@ All money maths uses `decimal.js` at 40 digits; floats appear only at the displa
 
 | Decision | Why | What we give up |
 |---|---|---|
-| Broker prices + SnapTrade quotes, no market-data vendor | Free market-data tiers forbid display or are too small (see [`docs/MARKET_DATA_FINDINGS.md`](docs/MARKET_DATA_FINDINGS.md)). Everything comes from one licensed source. | No backfill and no intraday view. `BenchmarkSource` is the seam to swap in a vendor later. |
+| Broker prices + SnapTrade quotes, no market-data vendor | Free market-data tiers forbid display or are too small. Everything comes from one licensed source. | No backfill and no intraday view. `BenchmarkSource` is the seam to swap in a vendor later. |
 | Snapshot after the close only | A noon price stored as a "close" would make every comparison wrong | A sign-in during market hours shows history only until that evening |
 | Recompute from stored rows on every page view | One row per trading day is small; a maths fix applies to all history at once | A little CPU per request; cached if needed at scale |
 | Next.js route handlers on Vercel + Neon Postgres | One deployable unit, a public URL, secret kept server-side | Serverless: no shared memory, so leases and pacing live in Postgres rows |
@@ -218,7 +218,7 @@ Bugs found by running it on a real account for a week, then by an independent co
 
 ## How we got here: the spike
 
-Before any product code, a throwaway spike tested our assumptions against a real Wealthsimple account. The code isn't included; its findings are in [`docs/FINDINGS.md`](docs/FINDINGS.md) and [`docs/MARKET_DATA_FINDINGS.md`](docs/MARKET_DATA_FINDINGS.md), and the original design notes in [`docs/DESIGN.md`](docs/DESIGN.md).
+Before any product code, a throwaway spike tested our assumptions against a real Wealthsimple account. The spike code and its notes aren't included in this repo.
 
 - **First idea, a hidden-cost audit:** dropped. Wealthsimple reports `fee: 0` on every trade and no FX rate on conversions, so costs can't be measured from this data.
 - **Market data:** the free tiers of Tiingo, Twelve Data, EODHD, Alpha Vantage and Massive either forbid displaying their prices or allow too few calls. This led to the snapshot-forward design built on broker prices and SnapTrade quotes.
