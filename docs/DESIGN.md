@@ -1,3 +1,5 @@
+> **Note:** written for the first idea, a hidden-cost audit, before the spike showed fees couldn't be measured. The visual direction, colours, type and rules carried over to Versus (red pen now means a loss or being behind the market); the wireframes and cost wording did not. The live design tokens are in [`app/globals.css`](../app/globals.css).
+
 # Hidden Cost Audit: design direction
 
 **Direction: the auditor's markup.** The app reads like a plain brokerage statement that an auditor has gone over with a red pen. The statement is quiet and black-and-white; every red mark is a cost we found. The look comes from real audit practice: ruled statement lines, tick marks beside figures, a double underline on the final total, and notes in the margin.

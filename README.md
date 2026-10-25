@@ -15,10 +15,11 @@
 7. [Testing](#testing)
 8. [Security and privacy](#security-and-privacy)
 9. [Scaling and operations](#scaling-and-operations)
-10. [How we got here: the spikes](#how-we-got-here-the-spikes)
+10. [How we got here: the spike](#how-we-got-here-the-spike)
 11. [Feedback for SnapTrade](#feedback-for-snaptrade)
 12. [Frontend rules](#frontend-rules)
-13. [AI usage](#ai-usage)
+13. [Known limitations](#known-limitations)
+14. [AI usage](#ai-usage)
 
 ## What it does
 
@@ -68,17 +69,17 @@ npm run dev                      # http://127.0.0.1:3000
 
 1. Create a Neon project; copy the **pooled** connection string.
 2. `DATABASE_URL=... npm run db:migrate`
-3. Import the repo into Vercel (Hobby is enough). Set the variables above in Project Settings → Environment Variables, using `npm run keygen` for the generated ones.
+3. Import the repo into Vercel (Hobby is enough); the app is at the repository root, so leave Root Directory empty. Set the variables above in Project Settings → Environment Variables, using `npm run keygen` for the generated ones.
 4. On the SnapTrade OAuth app, add `https://<your-domain>/auth/callback` as a redirect URI and set `SNAPTRADE_REDIRECT_URI` to it.
 5. Deploy. `vercel.json` registers the three crons (times are UTC):
 
 | Cron | Schedule | Job |
 |---|---|---|
-| `/api/cron/snapshot` | `0 22 * * 1-5` | FX, every active user's snapshot, then both benchmarks |
-| `/api/cron/retry` | `0 23 * * 1-5` | Only what the first run missed |
+| `/api/cron/snapshot` | `5 21 * * 1-5` | FX, both benchmarks, every active user's snapshot, then any benchmark still missing |
+| `/api/cron/retry` | `5 22 * * 1-5` | Users without a good close yet (none, or stale) and missing benchmarks |
 | `/api/cron/retention` | `30 23 * * *` | Deletes users with no visit in 12 months |
 
-22:00 UTC is 6 PM EDT / 5 PM EST: always after the 4 PM close. Vercel Hobby may run a cron anywhere within its hour, which still lands well before the next open.
+21:05 UTC is 4:05 PM EST / 5:05 PM EDT. Vercel Hobby may start a cron anywhere within its hour, so the snapshot always runs between about 4:05 and 6:05 PM Eastern: after the close, and as close to it as possible (the benchmark is SnapTrade's last trade, which can drift after hours). A test checks this for both summer and winter.
 
 6. Check `/api/health`: database reachable, and when the last run finished.
 
@@ -117,8 +118,8 @@ Vercel Cron (weekdays after close)
 r = (V_end − F) / V_start − 1
 ```
 
-- `V` = holdings priced by the broker at the close (units × price × contract multiplier, converted at that day's FX) + cash + money in transit between accounts.
-- `F` = external flows that day: contributions, withdrawals, referral bonuses, reimbursements, unmatched transfers.
+- `V` = every holding priced by the broker at that close (units × price × contract multiplier, converted at that day's FX) + cash + money in transit between accounts. A holding bought or sold during the day counts at the end where it exists, so a trade moves value between cash and holdings without creating a return.
+- `F` = external flows that day: contributions, withdrawals, referral bonuses, reimbursements, unmatched transfers, and any transfer leg whose other account isn't being compared that day (e.g. money moved into a newly linked account).
 - Only accounts present in **both** snapshots count, so a newly linked account is never a gain.
 
 Worked example (in `test/returns.test.ts`): 2,100 → 2,600 with a 500 deposit gives `(2600 − 500)/2100 − 1 = 0%`. The deposit is not a gain.
@@ -127,8 +128,10 @@ Worked example (in `test/returns.test.ts`): 2,100 → 2,600 with a 500 deposit g
 |---|---|
 | Transfer between your accounts | OUT matched to IN (same amount, within 7 days); in between it counts as "in transit". Unmatched transfers are treated as money leaving or arriving. |
 | Missed run | The next day spans the gap; the benchmark spans the same dates; the row says "covers N trading days". |
-| Activity not yet synced | Day marked **provisional** and recalculated when transactions arrive (activities re-read from 3 days before the last good snapshot). |
-| Holding with no price | Left out if the rest covers at least 90% of the portfolio (coverage shown); otherwise the day is excluded. |
+| Missing benchmark close | The days on either side are combined into one comparison, from the last saved price before the gap to the first after it; nothing is estimated. A gap on the very first day can't be anchored and is counted as left out. |
+| Trade (buy or sell) | Valued at each end where the holding exists; no return is created. A purchase the broker hasn't priced yet excludes the day. |
+| Activity not yet synced | Day marked **provisional** until the broker reports transactions through that date (checked on every page load, in New York time); activities are re-read from 3 days before the last good snapshot. |
+| Holding with no price | Left out of both ends if the rest covers at least 90% of the portfolio (coverage shown, measured with the holding's real size); otherwise the day is excluded. |
 | Asset transferred in with no cash value | Day excluded rather than counted as a gain. |
 | Portfolio under $100 | Excluded; percentages are noise. |
 | Stock split | Units × price is unchanged; no special case needed (tested). |
@@ -153,7 +156,7 @@ All money maths uses `decimal.js` at 40 digits; floats appear only at the displa
 
 | Decision | Why | What we give up |
 |---|---|---|
-| Broker prices + SnapTrade quotes, no market-data vendor | Free market-data tiers forbid display or are too small (see the spike). Everything comes from one licensed source. | No backfill and no intraday view. `BenchmarkSource` is the seam to swap in a vendor later. |
+| Broker prices + SnapTrade quotes, no market-data vendor | Free market-data tiers forbid display or are too small (see [`docs/MARKET_DATA_FINDINGS.md`](docs/MARKET_DATA_FINDINGS.md)). Everything comes from one licensed source. | No backfill and no intraday view. `BenchmarkSource` is the seam to swap in a vendor later. |
 | Snapshot after the close only | A noon price stored as a "close" would make every comparison wrong | A sign-in during market hours shows history only until that evening |
 | Recompute from stored rows on every page view | One row per trading day is small; a maths fix applies to all history at once | A little CPU per request; cached if needed at scale |
 | Next.js route handlers on Vercel + Neon Postgres | One deployable unit, a public URL, secret kept server-side | Serverless: no shared memory, so leases and pacing live in Postgres rows |
@@ -168,7 +171,7 @@ All money maths uses `decimal.js` at 40 digits; floats appear only at the displa
 ## Testing
 
 ```bash
-npm test          # 61 tests, fully offline, about 40 seconds
+npm test          # 88 tests, fully offline, about 25 seconds
 npm run typecheck
 npm run build
 ```
@@ -184,6 +187,14 @@ Bugs the tests caught during the build:
 - A token-endpoint 503 would have logged users out.
 - Benchmarks were captured before any accounts were stored, which lost day one's market close.
 - The URL builder dropped any path prefix on the API base.
+
+Bugs found by running it on a real account for a week, then by an independent code review, each fixed with a regression test that reproduces the exact scenario:
+- Days stayed **provisional forever**: the flag was frozen at snapshot time, when the broker is a day behind. Now re-evaluated on every page load.
+- A first snapshot taken by a sign-in (not the daily job) had **no benchmark price**, so the first comparison was missing. Every recorded close now saves that day's benchmark prices.
+- **Buying a new holding read as −5%** (and selling one out as +5%) on a day with no price moves: each end only counted holdings priced on both days. Each end is now valued on its own.
+- **Moving money into a newly linked account read as −50%**, and in-transit money from it as a gain: transfers now become flows when only one side is being compared.
+- One missing benchmark price **silently dropped two days** from the totals. They're now combined into one comparison (see the maths).
+- One broken or removed account failed the whole user every day; the retry run skipped stale snapshots; a sign-in before the open could overwrite a good close; sync times were read as UTC dates.
 
 ## Security and privacy
 
@@ -205,9 +216,9 @@ Bugs the tests caught during the build:
 - **Observability:** `snapshot_runs` records every run; `/api/health` exposes the last one. Schema drift in a SnapTrade response is logged with field paths (no values) and fails that user, not the run.
 - **Test app limit:** a SnapTrade test app allows 5 connected users. Production needs the app promoted.
 
-## How we got here: the spikes
+## How we got here: the spike
 
-`../spike` holds the throwaway code that tested our assumptions against a real Wealthsimple account before any product code was written.
+Before any product code, a throwaway spike tested our assumptions against a real Wealthsimple account. The code isn't included; its findings are in [`docs/FINDINGS.md`](docs/FINDINGS.md) and [`docs/MARKET_DATA_FINDINGS.md`](docs/MARKET_DATA_FINDINGS.md), and the original design notes in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 - **First idea, a hidden-cost audit:** dropped. Wealthsimple reports `fee: 0` on every trade and no FX rate on conversions, so costs can't be measured from this data.
 - **Market data:** the free tiers of Tiingo, Twelve Data, EODHD, Alpha Vantage and Massive either forbid displaying their prices or allow too few calls. This led to the snapshot-forward design built on broker prices and SnapTrade quotes.
@@ -238,6 +249,15 @@ The look is "an auditor's markup on a plain statement" (tokens in `app/globals.c
 - No client JavaScript for core features; the toggles are forms.
 - Sentence case, plain words, no all-caps labels; estimates are labelled as estimates.
 
+## Known limitations
+
+- **Scale:** the daily job processes users one at a time, spacing calls 7.5 s apart per account to respect SnapTrade's limit, within a 240 s budget. That's roughly 4–8 users per run (with the retry). The fix is a queue with one job per user; the per-user function is already the unit of work.
+- **Close-price fidelity:** the benchmark close is SnapTrade's `last_trade_price` at 4:05–6:05 PM Eastern, not the official closing print, and the quote has no "previous close" field. A broker serving delayed quotes could show pre-close prices. In winter the Bank of Canada rate (published around 4:30 PM) can be a day old until the retry run fetches it.
+- **Transaction completeness:** activity types Versus doesn't recognise are ignored; deposits the broker backdates more than 3 days before the last good snapshot aren't fetched; an account linked later has no history from before it was connected; "provisional" uses the date of the broker's last sync, not its time.
+- **Rare races:** a token renewal failing while another process waits for it can mark a user as needing to sign in; the per-user lock isn't owner-checked on release; a sync already running can undo "disconnect, keep history".
+- **Web hardening:** the production CSP allows inline scripts; sessions are stateless 30-day cookies, so a copied cookie stays valid until it expires.
+- **Scope:** CAD and USD only (other currencies exclude the day); validated against one broker (Wealthsimple); a SnapTrade test app allows 5 connected users.
+
 ## AI usage
 
-Built with Claude as a pair: research on SnapTrade's API and market-data licensing, the design doc, the spike scripts, code and tests. Every number in the tests was worked out by hand in comments; the spike findings came from running against a real account. Decisions, the product pivot and review were mine.
+Built with Claude as a pair: research on SnapTrade's API and market-data licensing, the design doc, the spike scripts, code and tests, and an independent review pass whose findings are listed under Testing. Every number in the tests was worked out by hand in comments; the spike findings came from running against a real account. Decisions, the product pivot and review were mine.

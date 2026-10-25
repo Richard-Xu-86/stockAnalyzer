@@ -1,6 +1,6 @@
 # Spike findings: O1–O6
 
-Generated 2026-10-18T17:54:59.253Z from `raw/`. Scenarios: wealthsimple-real.
+Generated 2026-10-18T17:54:59.253Z by the spike from scrubbed responses of a real Wealthsimple account (the spike code and data are not included; counts only, no amounts or account identifiers).
 
 Fill in every **Decision** line by hand after reading the evidence; the generator never decides.
 
